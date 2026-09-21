@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unified Hybrid Ensemble Detector (DeepVoiceGuard).
 Combines multi-domain acoustic tree ensembles with Deep Convolutional Neural Networks (LCNN, SpecResNet)
 and a Physics-Grounded Biological Glottal Verification Engine to deliver robust, codec-invariant
@@ -87,46 +87,49 @@ class DeepVoiceGuard:
         mean_seg_prob = float(np.mean(seg_probs)) if seg_probs else global_prob
         max_seg_prob = float(max(seg_probs)) if seg_probs else global_prob
 
-        # Base fused probability
-        raw_cloned_prob = float(0.55 * global_prob + 0.30 * mean_seg_prob + 0.15 * max_seg_prob)
+        # Base fused probability from models
+        raw_cloned_prob = float(0.50 * global_prob + 0.35 * mean_seg_prob + 0.15 * max_seg_prob)
 
-        # 3. Physics-Grounded Biological Glottal Verification
+        # 3. Physics-Grounded Biological Glottal & Vocal Tract Verification
         # Validates natural vocal tract micro-prosody and rules out false positives from lossy codecs (WhatsApp/Opus/MP3)
         f0_std = forensics.get('f0_std', 0.0)
         pitch_jitter = forensics.get('pitch_jitter', 0.0)
         voicing_rate = forensics.get('voicing_rate', 0.0)
-        hnr_db = forensics.get('hnr_db', 0.0)
         f0_mean = forensics.get('f0_mean', 0.0)
+        spec_cent_std = forensics.get('spectral_centroid_std', 0.0)
+        hnr_db = forensics.get('hnr_db', 0.0)
 
-        # Biological Human Voice Indicators:
-        is_natural_f0_range = (75.0 <= f0_mean <= 340.0)
-        has_natural_prosody = (f0_std >= 6.0)
-        has_organic_jitter = (0.005 <= pitch_jitter <= 0.075)
-        has_continuous_voicing = (voicing_rate >= 0.15)
-        has_natural_harmonics = (hnr_db >= 1.0)
+        # A. Check for True AI Voice Markers:
+        # Robotic pitch lock: Voiced speech is present (>25%), but pitch is abnormally flat (<2.2 Hz std) or jitter is artificially zero
+        is_robotic_f0 = (voicing_rate >= 0.25 and (f0_std < 2.2 or (0.0 < pitch_jitter < 0.0025)))
 
-        # Score biological naturalness
-        bio_points = 0
-        if is_natural_f0_range: bio_points += 1
-        if has_natural_prosody: bio_points += 2
-        if has_organic_jitter: bio_points += 2
-        if has_continuous_voicing: bio_points += 1
-        if has_natural_harmonics: bio_points += 1
+        # Phase scrambling: Voicing is present, but jitter is wildly broken (>0.12)
+        is_phase_scrambled = (voicing_rate >= 0.20 and pitch_jitter > 0.12)
 
-        # Check for robotic pitch lock or vocoder phase artifact
-        is_robotic_f0 = (voicing_rate > 0.30 and f0_std < 2.5)
-        is_abnormal_jitter = (pitch_jitter < 0.002 or pitch_jitter > 0.15)
+        # B. Check for Verified Human Biological Speech Markers:
+        # Natural speaking human voice has continuous pitch variation (f0_std >= 4.0 Hz), organic jitter, or natural spectral movement
+        is_human_f0_range = (75.0 <= f0_mean <= 360.0)
+        has_natural_prosody = (f0_std >= 4.0) and (0.004 <= pitch_jitter <= 0.085)
+        has_dynamic_formants = (spec_cent_std >= 60.0)
 
-        final_cloned_prob = raw_cloned_prob
-
-        if bio_points >= 5 and not is_robotic_f0 and not is_abnormal_jitter:
-            # Strong biological vocal biology -> Dampen codec false alarms (e.g. WhatsApp .ogg bandwidth cutoffs)
-            final_cloned_prob = min(final_cloned_prob, 0.32)
-        elif bio_points >= 4 and not is_robotic_f0:
-            final_cloned_prob = min(final_cloned_prob, 0.45)
-        elif is_robotic_f0 or is_abnormal_jitter:
-            # Unnatural static pitch or broken phase -> Elevate cloned probability
-            final_cloned_prob = max(final_cloned_prob, 0.78)
+        # Final Calibrated Score
+        if is_robotic_f0:
+            # Definite AI robotic synthesis
+            final_cloned_prob = max(raw_cloned_prob, 0.88)
+        elif is_phase_scrambled:
+            # Broken vocoder phase
+            final_cloned_prob = max(raw_cloned_prob, 0.82)
+        elif has_natural_prosody and is_human_f0_range:
+            # Verified authentic human vocal tract dynamics (e.g. real microphone / WhatsApp voice note)
+            final_cloned_prob = min(raw_cloned_prob * 0.35, 0.24)
+        elif is_human_f0_range and (f0_std >= 3.0 or has_dynamic_formants):
+            # Normal human speech
+            final_cloned_prob = min(raw_cloned_prob * 0.55, 0.34)
+        elif has_dynamic_formants:
+            # Dynamic acoustic spectrum
+            final_cloned_prob = min(raw_cloned_prob, 0.42)
+        else:
+            final_cloned_prob = raw_cloned_prob
 
         final_cloned_prob = float(np.clip(final_cloned_prob, 0.01, 0.99))
 
@@ -144,7 +147,7 @@ class DeepVoiceGuard:
             risk_level = "MEDIUM"
             confidence = 100.0 - abs(final_cloned_prob - 0.5) * 200.0
 
-        confidence = float(np.clip(confidence, 65.0, 99.5))
+        confidence = float(np.clip(confidence, 68.0, 99.5))
 
         return {
             'verdict': verdict,

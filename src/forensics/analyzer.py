@@ -1,4 +1,4 @@
-﻿"""
+"""
 Forensic Analysis & Diagnostic Explainer Engine.
 Extracts actionable forensic insights:
 - High-frequency cutoff / checkerboard vocoder artifact visualization
@@ -40,14 +40,16 @@ class ForensicAnalyzer:
         Tracks time-varying Fundamental Frequency (F0) and Harmonic-to-Noise Ratio.
         """
         try:
-            f0, voiced_flag, voiced_probs = librosa.pyin(
+            f0 = librosa.yin(
                 y,
-                fmin=librosa.note_to_hz('C2'),
-                fmax=librosa.note_to_hz('C7'),
+                fmin=65,
+                fmax=400,
                 sr=self.sr,
                 frame_length=1024,
                 hop_length=256
             )
+            # Mask out unvoiced frequencies outside human vocal range
+            f0 = np.where((f0 >= 70.0) & (f0 <= 380.0), f0, 0.0)
         except Exception:
             f0 = np.zeros(max(1, len(y) // 256))
 

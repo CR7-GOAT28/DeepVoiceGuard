@@ -22,22 +22,23 @@ class SpectralForensics:
 
         results = {}
 
-        # 1. Pitch / F0 & Harmonicity Analysis
+        # 1. Robust Pitch / F0 & Glottal Dynamics Tracking (YIN Algorithm)
         try:
-            f0, voiced_flag, voiced_probs = librosa.pyin(
+            f0 = librosa.yin(
                 y,
-                fmin=librosa.note_to_hz('C2'),
-                fmax=librosa.note_to_hz('C7'),
+                fmin=65,
+                fmax=400,
                 sr=self.sr,
                 frame_length=1024,
                 hop_length=256
             )
-            voiced_f0 = f0[~np.isnan(f0)] if f0 is not None else np.array([])
+            voiced_mask = (f0 >= 70.0) & (f0 <= 380.0)
+            voiced_f0 = f0[voiced_mask]
         except Exception:
-            voiced_f0 = np.array([])
             f0 = np.zeros(10)
+            voiced_f0 = np.array([])
         
-        if len(voiced_f0) > 2:
+        if len(voiced_f0) > 3:
             results['f0_mean'] = float(np.mean(voiced_f0))
             results['f0_std'] = float(np.std(voiced_f0))
             diffs = np.abs(np.diff(voiced_f0))
