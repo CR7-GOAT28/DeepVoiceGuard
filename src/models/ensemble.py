@@ -1,4 +1,4 @@
-"""
+﻿"""
 Unified Hybrid Ensemble Detector (DeepVoiceGuard).
 Combines multi-domain acoustic tree ensembles with Deep Convolutional Neural Networks (LCNN, SpecResNet)
 and a Physics-Grounded Biological Glottal Verification Engine to deliver robust, codec-invariant
@@ -55,7 +55,7 @@ class DeepVoiceGuard:
         y, _ = self.audio_loader.load_audio(audio_source, trim_silence=True)
         duration = self.audio_loader.get_duration(y)
 
-        # 1. Global audio features & biological glottal forensics
+        # 1. Global audio features
         feats_all = self.extractor.extract_all(y)
         forensics = feats_all['forensics']
         global_prob = self._predict_single_segment(y)
@@ -74,7 +74,7 @@ class DeepVoiceGuard:
             seg_prob = self._predict_single_segment(seg)
             seg_probs.append(seg_prob)
 
-            seg_verdict = "CLONED" if seg_prob >= 0.55 else ("SUSPICIOUS" if seg_prob >= 0.40 else "GENUINE")
+            seg_verdict = "CLONED" if seg_prob >= 0.50 else ("SUSPICIOUS" if seg_prob >= 0.35 else "GENUINE")
             segment_results.append({
                 'segment_index': idx,
                 'start_time': round(start_t, 2),
@@ -83,62 +83,27 @@ class DeepVoiceGuard:
                 'verdict': seg_verdict
             })
 
-        # Segment aggregation
-        mean_seg_prob = float(np.mean(seg_probs)) if seg_probs else global_prob
-        max_seg_prob = float(max(seg_probs)) if seg_probs else global_prob
+        # 3. Intelligent Temporal Aggregation
+        if seg_probs:
+            mean_seg_prob = float(np.mean(seg_probs))
+            max_seg_prob = float(max(seg_probs))
+            cloned_ratio = sum(1 for p in seg_probs if p >= 0.50) / len(seg_probs)
 
-        # Base fused probability from models
-        raw_cloned_prob = float(0.50 * global_prob + 0.35 * mean_seg_prob + 0.15 * max_seg_prob)
-
-        # 3. Physics-Grounded Biological Glottal & Vocal Tract Verification
-        # Validates natural vocal tract micro-prosody and rules out false positives from lossy codecs (WhatsApp/Opus/MP3)
-        f0_std = forensics.get('f0_std', 0.0)
-        pitch_jitter = forensics.get('pitch_jitter', 0.0)
-        voicing_rate = forensics.get('voicing_rate', 0.0)
-        f0_mean = forensics.get('f0_mean', 0.0)
-        spec_cent_std = forensics.get('spectral_centroid_std', 0.0)
-        hnr_db = forensics.get('hnr_db', 0.0)
-
-        # A. Check for True AI Voice Markers:
-        # Robotic pitch lock: Voiced speech is present (>25%), but pitch is abnormally flat (<2.2 Hz std) or jitter is artificially zero
-        is_robotic_f0 = (voicing_rate >= 0.25 and (f0_std < 2.2 or (0.0 < pitch_jitter < 0.0025)))
-
-        # Phase scrambling: Voicing is present, but jitter is wildly broken (>0.12)
-        is_phase_scrambled = (voicing_rate >= 0.20 and pitch_jitter > 0.12)
-
-        # B. Check for Verified Human Biological Speech Markers:
-        # Natural speaking human voice has continuous pitch variation (f0_std >= 4.0 Hz), organic jitter, or natural spectral movement
-        is_human_f0_range = (75.0 <= f0_mean <= 360.0)
-        has_natural_prosody = (f0_std >= 4.0) and (0.004 <= pitch_jitter <= 0.085)
-        has_dynamic_formants = (spec_cent_std >= 60.0)
-
-        # Final Calibrated Score
-        if is_robotic_f0:
-            # Definite AI robotic synthesis
-            final_cloned_prob = max(raw_cloned_prob, 0.88)
-        elif is_phase_scrambled:
-            # Broken vocoder phase
-            final_cloned_prob = max(raw_cloned_prob, 0.82)
-        elif has_natural_prosody and is_human_f0_range:
-            # Verified authentic human vocal tract dynamics (e.g. real microphone / WhatsApp voice note)
-            final_cloned_prob = min(raw_cloned_prob * 0.35, 0.24)
-        elif is_human_f0_range and (f0_std >= 3.0 or has_dynamic_formants):
-            # Normal human speech
-            final_cloned_prob = min(raw_cloned_prob * 0.55, 0.34)
-        elif has_dynamic_formants:
-            # Dynamic acoustic spectrum
-            final_cloned_prob = min(raw_cloned_prob, 0.42)
+            if cloned_ratio >= 0.35:
+                final_cloned_prob = 0.55 * max_seg_prob + 0.45 * mean_seg_prob
+            else:
+                final_cloned_prob = 0.80 * mean_seg_prob + 0.20 * max_seg_prob
         else:
-            final_cloned_prob = raw_cloned_prob
+            final_cloned_prob = global_prob
 
         final_cloned_prob = float(np.clip(final_cloned_prob, 0.01, 0.99))
 
         # Verdict and Risk Classification
-        if final_cloned_prob >= 0.60:
+        if final_cloned_prob >= 0.55:
             verdict = "AI_CLONED_SYNTHETIC"
             risk_level = "HIGH" if final_cloned_prob < 0.80 else "CRITICAL"
             confidence = (final_cloned_prob - 0.5) * 200.0
-        elif final_cloned_prob <= 0.40:
+        elif final_cloned_prob <= 0.38:
             verdict = "GENUINE_HUMAN_VOICE"
             risk_level = "LOW"
             confidence = (0.5 - final_cloned_prob) * 200.0
@@ -147,7 +112,7 @@ class DeepVoiceGuard:
             risk_level = "MEDIUM"
             confidence = 100.0 - abs(final_cloned_prob - 0.5) * 200.0
 
-        confidence = float(np.clip(confidence, 68.0, 99.5))
+        confidence = float(np.clip(confidence, 70.0, 99.5))
 
         return {
             'verdict': verdict,
@@ -164,9 +129,14 @@ class DeepVoiceGuard:
         }
 
     def _predict_single_segment(self, y_seg: np.ndarray) -> float:
+        """
+        Evaluates a single audio segment using physical acoustic forensics
+        and deep/tabular ML ensembles with biometric glottal verification.
+        """
         tab_vec, _ = self.extractor.extract_tabular(y_seg)
         mel_spec = self.extractor.extract_mel_spectrogram(y_seg)
         lfcc_tensor = self.extractor.extract_lfcc_tensor(y_seg)
+        forensics = self.extractor.forensics.analyze(y_seg)
 
         probs = []
         weights = []
@@ -174,7 +144,7 @@ class DeepVoiceGuard:
         if self.tabular_model is not None and self.tabular_model.is_fitted:
             p_tab = self.tabular_model.predict_proba(tab_vec)[0, 1]
             probs.append(p_tab)
-            weights.append(0.50)
+            weights.append(0.40)
 
         if self.lcnn_model is not None and self.lcnn_model.is_fitted:
             p_lcnn = self.lcnn_model.predict_proba(lfcc_tensor)[0, 1]
@@ -184,16 +154,44 @@ class DeepVoiceGuard:
         if self.specresnet_model is not None and self.specresnet_model.is_fitted:
             p_resnet = self.specresnet_model.predict_proba(mel_spec)[0, 1]
             probs.append(p_resnet)
-            weights.append(0.20)
+            weights.append(0.30)
 
-        if not probs:
-            stats = self.extractor.forensics.analyze(y_seg)
-            anomaly_score = 0.30
-            if stats.get('pitch_jitter', 0) < 0.003 and stats.get('voicing_rate', 0) > 0.4:
-                anomaly_score += 0.4
-            return float(np.clip(anomaly_score, 0.05, 0.95))
+        if probs:
+            total_w = sum(weights)
+            norm_weights = [w / total_w for w in weights]
+            raw_prob = float(sum(p * w for p, w in zip(probs, norm_weights)))
+        else:
+            raw_prob = 0.50
 
-        total_w = sum(weights)
-        norm_weights = [w / total_w for w in weights]
-        fused_prob = sum(p * w for p, w in zip(probs, norm_weights))
-        return float(fused_prob)
+        # Physics-Grounded Biological Glottal Verification on this Segment:
+        f0_std = forensics.get('f0_std', 0.0)
+        pitch_jitter = forensics.get('pitch_jitter', 0.0)
+        voicing_rate = forensics.get('voicing_rate', 0.0)
+        f0_mean = forensics.get('f0_mean', 0.0)
+        spec_cent_std = forensics.get('spectral_centroid_std', 0.0)
+
+        # 1. AI Synthetic Indicators
+        is_robotic_pitch = (voicing_rate >= 0.20 and (f0_std < 2.0 or (0.0 < pitch_jitter < 0.002)))
+        is_phase_scrambled = (voicing_rate >= 0.15 and pitch_jitter > 0.12)
+
+        # 2. Human Biological Indicators
+        is_human_f0 = (75.0 <= f0_mean <= 380.0)
+        has_human_prosody = (f0_std >= 3.5) and (0.003 <= pitch_jitter <= 0.08)
+        has_dynamic_vocal_tract = (spec_cent_std >= 50.0)
+
+        if is_robotic_pitch:
+            seg_prob = max(raw_prob, 0.90)
+        elif is_phase_scrambled:
+            seg_prob = max(raw_prob, 0.85)
+        elif has_human_prosody and is_human_f0:
+            # Verified natural human speaking voice
+            seg_prob = min(raw_prob * 0.30, 0.20)
+        elif is_human_f0 and (f0_std >= 2.5 or has_dynamic_vocal_tract):
+            seg_prob = min(raw_prob * 0.50, 0.30)
+        elif has_dynamic_vocal_tract:
+            seg_prob = min(raw_prob, 0.38)
+        else:
+            # Silence / ambient pauses
+            seg_prob = min(raw_prob, 0.32)
+
+        return float(np.clip(seg_prob, 0.01, 0.99))
