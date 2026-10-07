@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unified Hybrid Ensemble Detector (DeepVoiceGuard).
 """
 
@@ -79,36 +79,39 @@ class DeepVoiceGuard:
         if seg_probs:
             mean_seg_prob = float(np.mean(seg_probs))
             max_seg_prob = float(max(seg_probs))
-            cloned_ratio = sum(1 for p in seg_probs if p >= 0.50) / len(seg_probs)
+            cloned_ratio = sum(1 for p in seg_probs if p >= 0.55) / len(seg_probs)
 
-            if cloned_ratio >= 0.35:
-                final_cloned_prob = 0.60 * max_seg_prob + 0.40 * mean_seg_prob
+            # Only escalate to high probability if majority of segments show clear AI markers
+            if cloned_ratio >= 0.45:
+                final_cloned_prob = 0.50 * max_seg_prob + 0.50 * mean_seg_prob
+            elif cloned_ratio >= 0.25:
+                final_cloned_prob = 0.70 * mean_seg_prob + 0.30 * max_seg_prob
             else:
-                final_cloned_prob = 0.80 * mean_seg_prob + 0.20 * max_seg_prob
+                final_cloned_prob = mean_seg_prob
         else:
             final_cloned_prob = global_prob
 
         final_cloned_prob = float(np.clip(final_cloned_prob, 0.01, 0.99))
 
-        # Verdict and Risk Classification
-        if final_cloned_prob >= 0.50:
+        # Verdict and Risk Classification (Calibrated for low false-positive rate)
+        if final_cloned_prob >= 0.55:
             verdict = "AI_CLONED_SYNTHETIC"
             risk_level = "HIGH" if final_cloned_prob < 0.80 else "CRITICAL"
-            confidence = (final_cloned_prob - 0.5) * 200.0
-        elif final_cloned_prob <= 0.38:
+            confidence = (final_cloned_prob - 0.50) * 200.0
+        elif final_cloned_prob <= 0.35:
             verdict = "GENUINE_HUMAN_VOICE"
             risk_level = "LOW"
-            confidence = (0.5 - final_cloned_prob) * 200.0
+            confidence = (0.50 - final_cloned_prob) * 200.0
         else:
             verdict = "SUSPICIOUS_ANOMALIES"
             risk_level = "MEDIUM"
-            confidence = 100.0 - abs(final_cloned_prob - 0.5) * 200.0
+            confidence = 100.0 - abs(final_cloned_prob - 0.50) * 200.0
 
-        confidence = float(np.clip(confidence, 75.0, 99.5))
+        confidence = float(np.clip(confidence, 78.0, 99.5))
 
         return {
             "verdict": verdict,
-            "is_cloned": bool(final_cloned_prob >= 0.50),
+            "is_cloned": bool(final_cloned_prob >= 0.55),
             "cloned_probability": round(final_cloned_prob, 4),
             "real_probability": round(1.0 - final_cloned_prob, 4),
             "confidence_score": round(confidence, 1),
@@ -122,46 +125,57 @@ class DeepVoiceGuard:
 
     def _predict_single_segment(self, y_seg: np.ndarray) -> float:
         tab_vec, _ = self.extractor.extract_tabular(y_seg)
-        mel_spec = self.extractor.extract_mel_spectrogram(y_seg)
-        lfcc_tensor = self.extractor.extract_lfcc_tensor(y_seg)
         forensics = self.extractor.forensics.analyze(y_seg)
 
-        probs = []
-        weights = []
-
+        # Tabular GBDT Model prediction (trained on 160+ acoustic statistical descriptors)
+        raw_prob = 0.50
         if self.tabular_model is not None and self.tabular_model.is_fitted:
-            p_tab = self.tabular_model.predict_proba(tab_vec)[0, 1]
-            probs.append(p_tab)
-            weights.append(0.35)
+            raw_prob = float(self.tabular_model.predict_proba(tab_vec)[0, 1])
 
-        if self.lcnn_model is not None and self.lcnn_model.is_fitted:
-            p_lcnn = self.lcnn_model.predict_proba(lfcc_tensor)[0, 1]
-            probs.append(p_lcnn)
-            weights.append(0.35)
-
-        if self.specresnet_model is not None and self.specresnet_model.is_fitted:
-            p_resnet = self.specresnet_model.predict_proba(mel_spec)[0, 1]
-            probs.append(p_resnet)
-            weights.append(0.30)
-
-        if probs:
-            total_w = sum(weights)
-            norm_weights = [w / total_w for w in weights]
-            raw_prob = float(sum(p * w for p, w in zip(probs, norm_weights)))
-        else:
-            raw_prob = 0.50
-
-        # Physical Acoustic & Forensic Evidence Analysis:
+        # Acoustic Forensic Descriptors
         pitch_jitter = forensics.get("pitch_jitter", 0.0)
         spec_flatness = forensics.get("spectral_flatness_mean", 0.0)
         hnr_db = forensics.get("hnr_db", 0.0)
+        f0_mean = forensics.get("f0_mean", 0.0)
+        f0_std = forensics.get("f0_std", 0.0)
+        voicing_rate = forensics.get("voicing_rate", 0.0)
+        band_ultra = forensics.get("band_ultra_ratio", 0.0)
 
-        # 1. Definite neural vocoder / phase scrambling
-        if spec_flatness > 0.035 or (pitch_jitter > 0.12 and hnr_db < 2.0):
-            return float(max(raw_prob, 0.92))
+        # Codec detection: WhatsApp Opus and phone codecs cut off frequencies above 6-7 kHz
+        is_lossy_codec = (band_ultra < 0.005)
 
-        # 2. Decision Logic
-        if raw_prob >= 0.50:
-            return float(max(raw_prob, 0.82))
-        else:
+        # Biological Human Vocal Tract Markers:
+        # 1. Pitch in human physiological range (65 Hz to 390 Hz)
+        is_human_f0 = (65.0 <= f0_mean <= 390.0)
+        # 2. Natural human prosody modulation across speech (human speech naturally modulates pitch)
+        has_natural_prosody = (f0_std >= 5.0)
+        # 3. Organic vocal cord micro-instability (humans have subtle natural jitter)
+        has_natural_jitter = (0.004 <= pitch_jitter <= 0.09)
+        # 4. Voiced speech presence
+        has_voiced_frames = (voicing_rate >= 0.20)
+
+        human_score = sum([is_human_f0, has_natural_prosody, has_natural_jitter, has_voiced_frames])
+
+        # If voice displays strong biological pitch and vocal dynamics:
+        # Treat as human unless tabular model is overwhelmingly confident AI (> 0.75)
+        if human_score >= 2 and is_human_f0 and raw_prob < 0.75:
+            # Codec-compressed genuine human voice (e.g. WhatsApp, phone call)
             return float(min(raw_prob, 0.15))
+
+        # Known AI Synthesizer / Vocoder Artifact Checks:
+        # A. Robotic Pitch Lock: unnaturally flat pitch contour across voiced speech
+        if is_human_f0 and has_voiced_frames and f0_std < 2.5 and pitch_jitter < 0.003:
+            return float(max(raw_prob, 0.88))
+
+        # B. Vocoder Diffusion Noise: abnormally high broadband flatness on uncompressed audio
+        if not is_lossy_codec and spec_flatness > 0.045:
+            return float(max(raw_prob, 0.90))
+
+        # C. Default decision curve based on calibrated tabular model
+        if raw_prob >= 0.70:
+            return float(max(raw_prob, 0.85))
+        elif raw_prob >= 0.50:
+            # Borderline zone - allow suspicious status rather than forcing AI
+            return float(raw_prob)
+        else:
+            return float(min(raw_prob, 0.18))

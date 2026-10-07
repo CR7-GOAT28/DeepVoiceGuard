@@ -75,21 +75,25 @@ class ForensicAnalyzer:
         pitch_score = min(100.0, max(0.0, pitch_score))
 
         # High-frequency ratio (>4kHz & >7kHz)
-        high_ratio = forensic_stats.get('band_high_ratio', 0.0) + forensic_stats.get('band_ultra_ratio', 0.0)
+        ultra_band = forensic_stats.get('band_ultra_ratio', 0.0)
+        high_ratio = forensic_stats.get('band_high_ratio', 0.0) + ultra_band
         if high_ratio > 0.08:
             hf_score = 92.0
         elif high_ratio > 0.03:
-            hf_score = 75.0
+            hf_score = 80.0
+        elif ultra_band < 0.005:
+            # Codec-compressed audio (WhatsApp Opus / AMR) naturally cuts off at 6-7 kHz
+            hf_score = 78.0  # Normal for compressed voice notes
         else:
-            hf_score = max(15.0, high_ratio * 1500.0)
+            hf_score = max(30.0, high_ratio * 1500.0)
         hf_score = min(100.0, max(0.0, hf_score))
 
         # Harmonic Richness (HNR)
         hnr = forensic_stats.get('hnr_db', 0.0)
-        if 8.0 <= hnr <= 25.0:
+        if 5.0 <= hnr <= 25.0:
             hnr_score = 88.0
         else:
-            hnr_score = max(30.0, 88.0 - abs(hnr - 15.0) * 3.0)
+            hnr_score = max(35.0, 88.0 - abs(hnr - 12.0) * 3.0)
         hnr_score = min(100.0, max(0.0, hnr_score))
 
         # Spectral Dynamics (contrast & rolloff)
@@ -98,10 +102,10 @@ class ForensicAnalyzer:
 
         # Cepstral consistency
         flatness = forensic_stats.get('spectral_flatness_mean', 0.0)
-        if flatness < 0.02:
-            cep_score = 85.0
+        if flatness < 0.025:
+            cep_score = 88.0
         else:
-            cep_score = max(20.0, 85.0 - (flatness - 0.02) * 1500.0)
+            cep_score = max(25.0, 88.0 - (flatness - 0.025) * 1200.0)
         cep_score = min(100.0, max(0.0, cep_score))
 
         # Dispersion
@@ -127,23 +131,26 @@ class ForensicAnalyzer:
         hnr = stats.get('hnr_db', 0.0)
         flatness = stats.get('spectral_flatness_mean', 0.0)
 
-        if prob >= 0.50:
+        if prob >= 0.55:
             if jitter < 0.008:
                 bullets.append(f"**Robotic Pitch Regularity**: Detected unnaturally uniform pitch jitter ({jitter:.4f}), typical of neural TTS vocoders.")
             elif jitter > 0.07:
                 bullets.append(f"**Pitch Phase Discontinuity**: High pitch volatility ({jitter:.4f}) indicates synthetic splicing or neural model hallucination.")
 
             if ultra_band < 0.002:
-                bullets.append(f"**High-Frequency Spectral Cutoff**: Minimal energy detected above 7 kHz (energy ratio: {ultra_band:.4f}), indicating vocoder band-limiting.")
+                bullets.append(f"**High-Frequency Spectral Cutoff**: Minimal energy detected above 7 kHz (energy ratio: {ultra_band:.4f}), consistent with neural vocoder synthesis.")
 
-            if flatness > 0.03:
+            if flatness > 0.035:
                 bullets.append(f"**Vocoder Noise Floor Artifact**: Elevated spectral flatness ({flatness:.4f}) suggests synthetic diffusion noise.")
 
             if not bullets:
-                bullets.append(f"**Acoustic Artifact Pattern**: Multiple Linear Frequency Cepstral (LFCC) discrepancies matched deep neural vocoder signatures.")
+                bullets.append(f"**Acoustic Artifact Pattern**: Acoustic tabular classifier confirmed deep neural vocoder characteristics.")
         else:
             bullets.append(f"**Natural Vocal Jitter**: Pitch micro-instability ({jitter:.4f}) conforms to biological vocal cord oscillation patterns.")
             bullets.append(f"**Organic Harmonic Structure**: Harmonic-to-Noise Ratio ({hnr:.1f} dB) exhibits organic formant decay.")
-            bullets.append(f"**Full-Spectrum Integrity**: High-frequency band preservation ({ultra_band:.4f}) is consistent with authentic human speech acoustic recording.")
+            if ultra_band < 0.005:
+                bullets.append(f"**Lossy Codec Channel Profile**: High-frequency cutoff above ~6 kHz detected, consistent with standard VoIP / WhatsApp Opus compression on genuine speech.")
+            else:
+                bullets.append(f"**Full-Spectrum Integrity**: High-frequency band preservation ({ultra_band:.4f}) is consistent with authentic uncompressed human speech recording.")
 
         return bullets
