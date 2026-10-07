@@ -385,16 +385,16 @@ with tab_scan:
                         title={'text': "Cloned Probability Score (%)", 'font': {'size': 18}},
                         gauge={
                             'axis': {'range': [0, 100]},
-                            'bar': {'color': "#ef4444" if prob_fake >= 0.60 else ("#f59e0b" if prob_fake >= 0.40 else "#10b981")},
+                            'bar': {'color': "#ef4444" if prob_fake >= 0.50 else ("#f59e0b" if prob_fake >= 0.35 else "#10b981")},
                             'steps': [
-                                {'range': [0, 40], 'color': "rgba(16, 185, 129, 0.25)"},
-                                {'range': [40, 60], 'color': "rgba(245, 158, 11, 0.25)"},
-                                {'range': [60, 100], 'color': "rgba(239, 68, 68, 0.25)"}
+                                {'range': [0, 35], 'color': "rgba(16, 185, 129, 0.25)"},
+                                {'range': [35, 50], 'color': "rgba(245, 158, 11, 0.25)"},
+                                {'range': [50, 100], 'color': "rgba(239, 68, 68, 0.25)"}
                             ],
                             'threshold': {
                                 'line': {'color': "white", 'width': 3},
                                 'thickness': 0.75,
-                                'value': 60.0
+                                'value': 50.0
                             }
                         }
                     ))
@@ -418,7 +418,7 @@ with tab_scan:
                             range_color=[0, 100],
                             labels={'Risk %': 'Synthetic Probability %'}
                         )
-                        fig_time.add_hline(y=60, line_dash="dash", line_color="red", annotation_text="AI Threshold (60%)")
+                        fig_time.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="AI Threshold (50%)")
                         fig_time.update_layout(height=250, margin=dict(l=10, r=10, t=20, b=10), paper_bgcolor='rgba(0,0,0,0)')
                         st.plotly_chart(fig_time, use_container_width=True)
 

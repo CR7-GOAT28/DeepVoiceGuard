@@ -81,10 +81,8 @@ class DeepVoiceGuard:
             max_seg_prob = float(max(seg_probs))
             cloned_ratio = sum(1 for p in seg_probs if p >= 0.50) / len(seg_probs)
 
-            if cloned_ratio >= 0.40:
-                final_cloned_prob = 0.50 * max_seg_prob + 0.50 * mean_seg_prob
-            elif cloned_ratio >= 0.20:
-                final_cloned_prob = 0.70 * mean_seg_prob + 0.30 * max_seg_prob
+            if cloned_ratio >= 0.33:
+                final_cloned_prob = 0.60 * max_seg_prob + 0.40 * mean_seg_prob
             else:
                 final_cloned_prob = mean_seg_prob
         else:
@@ -93,11 +91,11 @@ class DeepVoiceGuard:
         final_cloned_prob = float(np.clip(final_cloned_prob, 0.01, 0.99))
 
         # Verdict and Risk Classification
-        if final_cloned_prob >= 0.60:
+        if final_cloned_prob >= 0.50:
             verdict = "AI_CLONED_SYNTHETIC"
             risk_level = "HIGH" if final_cloned_prob < 0.80 else "CRITICAL"
             confidence = (final_cloned_prob - 0.50) * 200.0
-        elif final_cloned_prob <= 0.40:
+        elif final_cloned_prob <= 0.35:
             verdict = "GENUINE_HUMAN_VOICE"
             risk_level = "LOW"
             confidence = (0.50 - final_cloned_prob) * 200.0
@@ -110,7 +108,7 @@ class DeepVoiceGuard:
 
         return {
             "verdict": verdict,
-            "is_cloned": bool(final_cloned_prob >= 0.60),
+            "is_cloned": bool(final_cloned_prob >= 0.50),
             "cloned_probability": round(final_cloned_prob, 4),
             "real_probability": round(1.0 - final_cloned_prob, 4),
             "confidence_score": round(confidence, 1),
@@ -131,26 +129,35 @@ class DeepVoiceGuard:
         weights = []
 
         # 1. Tabular GBDT Classifier (LightGBM + XGBoost + RF + ExtraTrees on 160+ features)
+        p_tab = 0.50
         if self.tabular_model is not None and self.tabular_model.is_fitted:
             p_tab = float(self.tabular_model.predict_proba(tab_vec)[0, 1])
             probs.append(p_tab)
-            weights.append(0.40)
+            weights.append(0.35)
 
         # 2. PyTorch LFCC-LCNN Deep Network (Max-Feature-Map activation for neural vocoder artifacts)
+        p_lcnn = 0.50
         if self.lcnn_model is not None and self.lcnn_model.is_fitted:
             p_lcnn = float(self.lcnn_model.predict_proba(lfcc_tensor)[0, 1])
             probs.append(p_lcnn)
-            weights.append(0.35)
+            weights.append(0.45)
 
         # 3. PyTorch SpecResNet Deep Network (Log-Mel Spectrogram 2D Residual Architecture)
+        p_res = 0.50
         if self.specresnet_model is not None and self.specresnet_model.is_fitted:
             p_res = float(self.specresnet_model.predict_proba(mel_spec)[0, 1])
             probs.append(p_res)
-            weights.append(0.25)
+            weights.append(0.20)
 
         if probs:
             total_w = sum(weights)
             weighted_prob = sum(p * w for p, w in zip(probs, weights)) / total_w
+
+            # When the LFCC-LCNN deep detector finds strong neural vocoder fingerprints (>= 0.75):
+            # Prioritize the neural vocoder detection (prevents dilution on ElevenLabs/XTTS)
+            if p_lcnn >= 0.75:
+                weighted_prob = max(weighted_prob, p_lcnn * 0.90)
+
             return float(np.clip(weighted_prob, 0.01, 0.99))
         else:
             return 0.50
