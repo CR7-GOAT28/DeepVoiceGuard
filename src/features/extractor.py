@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unified Feature Extraction Engine.
 Coordinates extraction of tabular acoustic descriptors, 2D Mel spectrograms,
 2D LFCC tensors, and forensic diagnostic curves.
@@ -58,7 +58,7 @@ class FeatureExtractor:
 
         if log_mel.shape[1] < target_frames:
             pad_width = target_frames - log_mel.shape[1]
-            log_mel = np.pad(log_mel, ((0, 0), (0, pad_width)), mode='constant')
+            log_mel = np.pad(log_mel, ((0, 0), (0, pad_width)), mode='wrap')
         else:
             log_mel = log_mel[:, :target_frames]
 
@@ -75,7 +75,7 @@ class FeatureExtractor:
         lfcc = extract_lfcc(y, sr=self.sr, n_lfcc=20, with_deltas=True)
         if lfcc.shape[1] < target_frames:
             pad_w = target_frames - lfcc.shape[1]
-            lfcc = np.pad(lfcc, ((0, 0), (0, pad_w)), mode='constant')
+            lfcc = np.pad(lfcc, ((0, 0), (0, pad_w)), mode='wrap')
         else:
             lfcc = lfcc[:, :target_frames]
         return lfcc.astype(np.float32)

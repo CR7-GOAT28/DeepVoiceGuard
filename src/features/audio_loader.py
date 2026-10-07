@@ -1,4 +1,4 @@
-﻿"""
+"""
 Audio loading, resampling, normalization, and segmentation utility.
 """
 
@@ -77,8 +77,9 @@ class AudioLoader:
         hop_len = int(chunk_len * (1.0 - overlap))
 
         if len(y) <= chunk_len:
-            padded = np.pad(y, (0, max(0, chunk_len - len(y))), mode='constant')
-            return [padded.astype(np.float32)]
+            reps = int(np.ceil(chunk_len / max(1, len(y))))
+            tiled = np.tile(y, reps)[:chunk_len]
+            return [tiled.astype(np.float32)]
 
         segments = []
         for start in range(0, len(y) - chunk_len + 1, hop_len):

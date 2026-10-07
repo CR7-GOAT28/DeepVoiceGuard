@@ -93,11 +93,11 @@ class DeepVoiceGuard:
         final_cloned_prob = float(np.clip(final_cloned_prob, 0.01, 0.99))
 
         # Verdict and Risk Classification
-        if final_cloned_prob >= 0.50:
+        if final_cloned_prob >= 0.60:
             verdict = "AI_CLONED_SYNTHETIC"
             risk_level = "HIGH" if final_cloned_prob < 0.80 else "CRITICAL"
             confidence = (final_cloned_prob - 0.50) * 200.0
-        elif final_cloned_prob <= 0.35:
+        elif final_cloned_prob <= 0.40:
             verdict = "GENUINE_HUMAN_VOICE"
             risk_level = "LOW"
             confidence = (0.50 - final_cloned_prob) * 200.0
@@ -110,7 +110,7 @@ class DeepVoiceGuard:
 
         return {
             "verdict": verdict,
-            "is_cloned": bool(final_cloned_prob >= 0.50),
+            "is_cloned": bool(final_cloned_prob >= 0.60),
             "cloned_probability": round(final_cloned_prob, 4),
             "real_probability": round(1.0 - final_cloned_prob, 4),
             "confidence_score": round(confidence, 1),
