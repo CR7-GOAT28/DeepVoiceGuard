@@ -7,6 +7,7 @@ import io
 import numpy as np
 import librosa
 import soundfile as sf
+import scipy.signal as signal
 from typing import Tuple, List, Optional, Union
 
 DEFAULT_SAMPLE_RATE = 16000
@@ -50,6 +51,11 @@ class AudioLoader:
 
         if len(y) == 0:
             y = np.zeros(self.target_sr, dtype=np.float32)
+
+        # Remove sub-audible microphone DC bias and 50/60 Hz electrical hum (< 65 Hz)
+        if len(y) > 128:
+            b, a = signal.butter(2, 65.0 / (self.target_sr / 2.0), btype='high')
+            y = signal.lfilter(b, a, y).astype(np.float32)
 
         # Peak normalization
         max_val = np.max(np.abs(y))

@@ -77,14 +77,31 @@ class DeepVoiceGuard:
 
         # 3. Temporal Aggregation
         if seg_probs:
-            mean_seg_prob = float(np.mean(seg_probs))
-            max_seg_prob = float(max(seg_probs))
-            cloned_ratio = sum(1 for p in seg_probs if p >= 0.50) / len(seg_probs)
+            n = len(seg_probs)
+            mean_prob = float(np.mean(seg_probs))
+            max_prob = float(max(seg_probs))
+            min_prob = float(min(seg_probs))
+            cloned_count = sum(1 for p in seg_probs if p >= 0.50)
 
-            if cloned_ratio >= 0.33:
-                final_cloned_prob = 0.60 * max_seg_prob + 0.40 * mean_seg_prob
+            if n == 1:
+                final_cloned_prob = seg_probs[0]
+            elif n == 2:
+                # If one segment is clearly human (<= 0.30) and one is anomalous,
+                # prevent an isolated onset noise artifact from causing a false alarm
+                if min_prob <= 0.30:
+                    final_cloned_prob = 0.35 * max_prob + 0.65 * min_prob
+                elif cloned_count == 2:
+                    final_cloned_prob = 0.60 * max_prob + 0.40 * mean_prob
+                else:
+                    final_cloned_prob = mean_prob
             else:
-                final_cloned_prob = mean_seg_prob
+                cloned_ratio = cloned_count / n
+                if cloned_ratio >= 0.50:
+                    final_cloned_prob = 0.60 * max_prob + 0.40 * mean_prob
+                elif cloned_ratio >= 0.33 and min_prob > 0.25:
+                    final_cloned_prob = 0.40 * max_prob + 0.60 * mean_prob
+                else:
+                    final_cloned_prob = mean_prob
         else:
             final_cloned_prob = global_prob
 
@@ -124,6 +141,7 @@ class DeepVoiceGuard:
         tab_vec, _ = self.extractor.extract_tabular(y_seg)
         mel_spec = self.extractor.extract_mel_spectrogram(y_seg)
         lfcc_tensor = self.extractor.extract_lfcc_tensor(y_seg)
+        forensics = self.extractor.forensics.analyze(y_seg)
 
         probs = []
         weights = []
@@ -154,8 +172,11 @@ class DeepVoiceGuard:
             weighted_prob = sum(p * w for p, w in zip(probs, weights)) / total_w
 
             # When the LFCC-LCNN deep detector finds strong neural vocoder fingerprints (>= 0.75):
-            # Prioritize the neural vocoder detection (prevents dilution on ElevenLabs/XTTS)
-            if p_lcnn >= 0.75:
+            # Only prioritize if the segment contains voiced speech AND vocoder noise (HNR < 2.0).
+            # This prevents silent room noise or clean human vocal cords from false triggering.
+            v_rate = forensics.get("voicing_rate", 0.0)
+            hnr = forensics.get("hnr_db", 0.0)
+            if p_lcnn >= 0.75 and (v_rate >= 0.25 and hnr < 2.0):
                 weighted_prob = max(weighted_prob, p_lcnn * 0.90)
 
             return float(np.clip(weighted_prob, 0.01, 0.99))
